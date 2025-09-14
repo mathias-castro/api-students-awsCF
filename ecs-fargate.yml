@@ -1,31 +1,53 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: ECS Fargate (ALB) para api-students (Flask/SQLite, port 8000)
+Description: >
+  ECS Fargate (ALB) para api-students (Flask + SQLite, puerto 8000).
+  Usa únicamente el rol existente LabRole que trae AWS Academy.
 
 Parameters:
-  VpcId: { Type: AWS::EC2::VPC::Id }
-  SubnetIds: { Type: List<AWS::EC2::Subnet::Id> }
-  ImageUri: { Type: String }
-  LabRoleArn: { Type: String }
-  DesiredCount: { Type: Number, Default: 1 }
-  ContainerPort: { Type: Number, Default: 8000 }
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: ID de la VPC (usa la Default VPC)
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Dos subnets de la VPC (separadas por coma)
+  ImageUri:
+    Type: String
+    Description: URI de la imagen en ECR (ej. 123456789012.dkr.ecr.us-east-1.amazonaws.com/api-students:latest)
+  LabRoleArn:
+    Type: String
+    Description: arn:aws:iam::<TU_ACCOUNT_ID>:role/LabRole  (reemplaza con tu Account ID)
+  DesiredCount:
+    Type: Number
+    Default: 1
+  ContainerPort:
+    Type: Number
+    Default: 8000
 
 Resources:
+  # --- Seguridad
   ALBSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: SG ALB
+      GroupDescription: SG del ALB
       VpcId: !Ref VpcId
       SecurityGroupIngress:
-        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
 
   ServiceSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: SG Service
+      GroupDescription: SG del servicio ECS
       VpcId: !Ref VpcId
       SecurityGroupIngress:
-        - { IpProtocol: tcp, FromPort: !Ref ContainerPort, ToPort: !Ref ContainerPort, SourceSecurityGroupId: !Ref ALBSG }
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref ALBSG
 
+  # --- Load Balancer
   ALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -42,7 +64,8 @@ Resources:
       TargetType: ip
       VpcId: !Ref VpcId
       HealthCheckPath: /
-      Matcher: { HttpCode: 200-399 }
+      Matcher:
+        HttpCode: 200-399
 
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -51,8 +74,17 @@ Resources:
       Port: 80
       Protocol: HTTP
       DefaultActions:
-        - { Type: forward, TargetGroupArn: !Ref TargetGroup }
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
 
+  # --- Logs (opcional pero útil)
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/api-students
+      RetentionInDays: 7
+
+  # --- ECS
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
@@ -65,13 +97,20 @@ Resources:
       Cpu: '256'
       Memory: '512'
       NetworkMode: awsvpc
-      ExecutionRoleArn: !Ref LabRoleArn
-      TaskRoleArn: !Ref LabRoleArn
+      ExecutionRoleArn: !Ref LabRoleArn   # usa el LabRole existente
+      TaskRoleArn: !Ref LabRoleArn        # permisos para la app (mínimos via LabRole)
       ContainerDefinitions:
         - Name: api-students
           Image: !Ref ImageUri
-          PortMappings: [ { ContainerPort: !Ref ContainerPort } ]
           Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
 
   Service:
     Type: AWS::ECS::Service
@@ -80,6 +119,7 @@ Resources:
       Cluster: !Ref Cluster
       DesiredCount: !Ref DesiredCount
       LaunchType: FARGATE
+      TaskDefinition: !Ref TaskDefinition
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
@@ -89,9 +129,8 @@ Resources:
         - TargetGroupArn: !Ref TargetGroup
           ContainerName: api-students
           ContainerPort: !Ref ContainerPort
-      TaskDefinition: !Ref TaskDefinition
 
 Outputs:
   ALBDNSName:
+    Description: DNS público del Application Load Balancer
     Value: !GetAtt ALB.DNSName
-    Description: DNS público del ALB
