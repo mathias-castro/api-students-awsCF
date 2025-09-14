@@ -63,7 +63,7 @@ Resources:
       Protocol: HTTP
       TargetType: ip
       VpcId: !Ref VpcId
-      HealthCheckPath: /
+      HealthCheckPath: /students
       Matcher:
         HttpCode: 200-399
 
